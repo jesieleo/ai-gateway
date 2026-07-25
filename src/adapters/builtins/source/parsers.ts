@@ -16,6 +16,10 @@ import {
   normalizeConversationRole,
   normalizeMessageRole
 } from '../../../utils';
+import {
+  decodeOpenAIResponsesReasoningEnvelope,
+  OPENAI_RESPONSES_REASONING_FORMAT
+} from '../reasoning-envelope';
 import { normalizeNamespacedToolName } from '../target/tools';
 
 export function parseOpenAIResponsesRequest(body: Record<string, unknown>): Result<StandardRequest> {
@@ -819,10 +823,15 @@ function normalizeOpenAIResponsesReasoningItem(item: Record<string, unknown>): S
   const summary = normalizeReasoningSummaryText(item.summary);
   const text = normalizeReasoningContentText(item.content) || asString(item.text);
   const encryptedContent = asString(item.encrypted_content);
+  const id = asString(item.id);
   const reasoning: StandardRequestInputContent = {
-    type: 'reasoning'
+    type: 'reasoning',
+    source_format: OPENAI_RESPONSES_REASONING_FORMAT
   };
 
+  if (id) {
+    reasoning.id = id;
+  }
   if (text) {
     reasoning.text = text;
   }
@@ -879,11 +888,14 @@ function normalizeReasoningContentText(value: unknown): string | undefined {
 
 function buildReasoningDetailsForChat(reasoning: StandardRequestInputContent & { type: 'reasoning' }): unknown[] {
   const details: unknown[] = [];
+  const metadata = {
+    format: reasoning.source_format || OPENAI_RESPONSES_REASONING_FORMAT
+  };
   if (reasoning.summary) {
     details.push({
       type: 'reasoning.summary',
       summary: reasoning.summary,
-      format: 'openai-responses-v1',
+      ...metadata,
       index: details.length
     });
   }
@@ -891,7 +903,7 @@ function buildReasoningDetailsForChat(reasoning: StandardRequestInputContent & {
     details.push({
       type: 'reasoning.text',
       text: reasoning.text,
-      format: 'openai-responses-v1',
+      ...metadata,
       index: details.length
     });
   }
@@ -899,7 +911,8 @@ function buildReasoningDetailsForChat(reasoning: StandardRequestInputContent & {
     details.push({
       type: 'reasoning.encrypted',
       data: reasoning.encrypted_content,
-      format: 'openai-responses-v1',
+      ...metadata,
+      ...(reasoning.id ? { id: reasoning.id } : {}),
       index: details.length
     });
   }
@@ -1351,14 +1364,23 @@ function normalizeAnthropicThinkingBlock(
       return null;
     }
 
+    const envelope = decodeOpenAIResponsesReasoningEnvelope(data);
+    const encryptedContent = envelope?.encryptedContent || data;
     return {
       type: 'reasoning',
-      encrypted_content: data,
+      ...(envelope
+        ? {
+            id: envelope.id,
+            source_format: OPENAI_RESPONSES_REASONING_FORMAT
+          }
+        : {}),
+      encrypted_content: encryptedContent,
       reasoning_details: [
         {
           type: 'reasoning.encrypted',
-          data,
-          format: 'anthropic-claude-v1',
+          data: encryptedContent,
+          ...(envelope ? { id: envelope.id } : {}),
+          format: envelope ? OPENAI_RESPONSES_REASONING_FORMAT : 'anthropic-claude-v1',
           index
         }
       ]
